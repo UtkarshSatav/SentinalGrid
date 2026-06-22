@@ -1,0 +1,31 @@
+######## SentinelGrid — Live Verification Snapshot ########
+Date: Mon Jun 22 00:43:45 IST 2026
+
+===== docker compose ps =====
+SERVICE                 STATUS                        PORTS
+api-gateway             Up About a minute (healthy)   0.0.0.0:8000-8001->8000-8001/tcp, [::]:8000-8001->8000-8001/tcp
+dashboard-ui            Up 6 minutes (healthy)        0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+grafana                 Up 6 minutes                  0.0.0.0:3001->3000/tcp, [::]:3001->3000/tcp
+incident-coordination   Up 6 minutes                  0.0.0.0:8083->8083/tcp, [::]:8083->8083/tcp
+intel-distribution      Up 6 minutes                  0.0.0.0:8082->8082/tcp, [::]:8082->8082/tcp
+kafka                   Up 2 minutes (healthy)        0.0.0.0:19092->19092/tcp, [::]:19092->19092/tcp
+prometheus              Up 6 minutes                  0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp
+threat-analysis         Up About a minute (healthy)   0.0.0.0:8081->8081/tcp, [::]:8081->8081/tcp
+threat-ingestion        Up About a minute (healthy)   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+
+===== Service health endpoints (probed in-network) =====
+dashboard-ui             -> 200
+threat-ingestion         -> 200
+threat-analysis          -> 200
+intel-distribution       -> 200
+incident-coordination    -> 200
+api-gateway(proxy)       -> 200
+api-gateway(admin)       -> 200
+
+===== Prometheus scrape targets =====
+api-gateway            -> up
+incident-coordination  -> up
+intel-distribution     -> up
+prometheus             -> up
+threat-analysis        -> up
+threat-ingestion       -> up

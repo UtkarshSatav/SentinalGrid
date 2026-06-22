@@ -1,0 +1,35 @@
+## Jenkins Kubernetes agent pod — ephemeral per build, IRSA, restricted SCC.
+apiVersion: v1
+kind: Pod
+metadata:
+  labels: { app: jenkins-agent }
+spec:
+  serviceAccountName: jenkins-agent
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:latest-jdk21
+      resources: { requests: { cpu: "200m", memory: "512Mi" }, limits: { cpu: "1", memory: "1Gi" } }
+    - name: tools
+      image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/ci-tools:stable
+      command: ["cat"]
+      tty: true
+      resources: { requests: { cpu: "500m", memory: "1Gi" }, limits: { cpu: "2", memory: "4Gi" } }
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      resources: { requests: { cpu: "1", memory: "2Gi" }, limits: { cpu: "4", memory: "8Gi" } }
+      volumeMounts:
+        - { name: docker-config, mountPath: /kaniko/.docker/ }
+  volumes:
+    - name: docker-config
+      projected:
+        sources:
+          - serviceAccountToken: { path: token, audience: sts.amazonaws.com, expirationSeconds: 3600 }
+  nodeSelector: { role: system }
+  tolerations:
+    - { key: "role", operator: "Equal", value: "system", effect: "NoSchedule" }

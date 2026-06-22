@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.turbo
+*.log
+.DS_Store
+.env*.local
+sentinelgrid.db
+sentinelgrid.db-shm
+sentinelgrid.db-wal
+tsconfig.tsbuildinfo

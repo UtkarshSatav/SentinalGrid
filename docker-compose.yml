@@ -1,0 +1,153 @@
+# SentinelGrid — local demonstration stack.
+#
+# Brings the full platform up on a laptop so the case-study deliverables can be
+# shown end-to-end without AWS: all microservices, a Kafka broker (Apache Kafka),
+# the API gateway, and the Prometheus + Grafana monitoring plane.
+#
+#   docker compose build      # build all images
+#   docker compose up -d       # start the stack
+#   docker compose ps          # verify health
+#
+# The Terraform / EKS / MSK / Vault / ELK production topology is documented
+# under terraform/, kubernetes/, vault/ and logging/ — this compose file is the
+# runnable local equivalent for demonstration and evaluation.
+
+name: sentinelgrid
+
+networks:
+  sentinelgrid:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  grafana-data:
+  prometheus-data:
+
+services:
+  # ───────────────────────── Kafka (Apache Kafka, KRaft) ─────────────────────────
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "19092:19092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [sentinelgrid]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  # ───────────────────────── Platform services ─────────────────────────
+  threat-ingestion:
+    build: { context: ., dockerfile: docker/threat-ingestion/Dockerfile }
+    image: sentinelgrid/threat-ingestion:local
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+    ports: ["8080:8080"]
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  threat-analysis:
+    build: { context: ., dockerfile: docker/threat-analysis/Dockerfile }
+    image: sentinelgrid/threat-analysis:local
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+    ports: ["8081:8081"]
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  intel-distribution:
+    build: { context: ., dockerfile: docker/intel-distribution/Dockerfile }
+    image: sentinelgrid/intel-distribution:local
+    ports: ["8082:8082"]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  incident-coordination:
+    build: { context: ., dockerfile: docker/incident-coordination/Dockerfile }
+    image: sentinelgrid/incident-coordination:local
+    ports: ["8083:8083"]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  dashboard-ui:
+    build: { context: ., dockerfile: docker/dashboard-ui/Dockerfile }
+    image: sentinelgrid/dashboard-ui:local
+    ports: ["3000:3000"]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  api-gateway:
+    build: { context: ., dockerfile: docker/api-gateway/Dockerfile }
+    image: sentinelgrid/api-gateway:local
+    environment:
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"   # expose admin + /metrics for Prometheus
+    ports:
+      - "8000:8000"   # proxy
+      - "8001:8001"   # admin + /metrics
+    depends_on: [threat-ingestion, intel-distribution, incident-coordination, dashboard-ui]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  # ───────────────────────── Synthetic load (demo data) ─────────────────────────
+  load-generator:
+    image: python:3.12-slim
+    volumes:
+      - ./scripts/load/feed.py:/feed.py:ro
+    command: ["python", "/feed.py"]
+    environment:
+      INGEST_URL: http://threat-ingestion:8080
+      INTEL_URL: http://intel-distribution:8082
+      INCIDENT_URL: http://incident-coordination:8083
+      INTERVAL_SECONDS: "3"
+    depends_on: [threat-ingestion, threat-analysis, intel-distribution, incident-coordination]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  # ───────────────────────── Monitoring plane ─────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["9090:9090"]
+    networks: [sentinelgrid]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: sentinelgrid
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+    networks: [sentinelgrid]
+    restart: unless-stopped

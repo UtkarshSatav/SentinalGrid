@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: threat-ingestion
+  namespace: sg-apps
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sentinelgrid-threat-ingestion
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-ingestion
+  namespace: sg-apps
+  labels: { app: threat-ingestion, tier: application }
+spec:
+  replicas: 6
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 25%, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: threat-ingestion }
+  template:
+    metadata:
+      labels: { app: threat-ingestion, tier: application }
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "threat-ingestion"
+        vault.hashicorp.com/agent-inject-secret-db: "database/creds/threat-ingestion"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: threat-ingestion
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: threat-ingestion }
+      containers:
+        - name: app
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/threat-ingestion:IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http,    containerPort: 8080 }
+            - { name: metrics, containerPort: 8080 }
+          env:
+            - { name: KAFKA_BROKERS, valueFrom: { configMapKeyRef: { name: platform-config, key: kafka.brokers } } }
+            - { name: LOG_LEVEL,     value: "INFO" }
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits:   { cpu: "2",    memory: "2Gi" }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+      nodeSelector:
+        role: app
+      tolerations:
+        - { key: "role", operator: "Equal", value: "app", effect: "NoSchedule" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: threat-ingestion
+  namespace: sg-apps
+  labels: { app: threat-ingestion }
+spec:
+  type: ClusterIP
+  selector: { app: threat-ingestion }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: threat-ingestion
+  namespace: sg-apps
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: threat-ingestion
+  minReplicas: 6
+  maxReplicas: 60
+  metrics:
+    - type: Resource
+      resource: { name: cpu,    target: { type: Utilization, averageUtilization: 65 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 75 } }
+    - type: Pods
+      pods:
+        metric: { name: sg_events_ingested_rate }
+        target: { type: AverageValue, averageValue: "500" }
+  behavior:
+    scaleUp:   { stabilizationWindowSeconds: 30,  policies: [{ type: Percent, value: 100, periodSeconds: 30 }] }
+    scaleDown: { stabilizationWindowSeconds: 300, policies: [{ type: Percent, value: 25,  periodSeconds: 60 }] }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: threat-ingestion
+  namespace: sg-apps
+spec:
+  minAvailable: 75%
+  selector:
+    matchLabels: { app: threat-ingestion }

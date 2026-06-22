@@ -1,0 +1,53 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "SentinelGrid — Platform Overview",
+  "tags": ["sentinelgrid"],
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Events ingested (rate/s)",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(sg_events_ingested_total[1m]))", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Events scored (rate/s)",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(sg_events_scored_total[1m]))", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Active incidents",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sg_incidents_active", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Intel feed pulls",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sg_intel_feed_requests_total", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Scored events by verdict",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (verdict) (rate(sg_events_scored_total[1m]))", "legendFormat": "{{verdict}}", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Service up (Prometheus targets)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up", "legendFormat": "{{job}}", "refId": "A" }]
+    }
+  ]
+}

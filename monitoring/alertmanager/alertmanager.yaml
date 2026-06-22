@@ -1,0 +1,53 @@
+## Alertmanager routing — pages → PagerDuty (24x7 SOC),
+## tickets → ServiceNow, info → Slack.
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.sentinelgrid.internal:587'
+  smtp_from:      'alerts@sentinelgrid.internal'
+
+route:
+  group_by:       ['alertname','cluster','severity']
+  group_wait:     30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: slack-default
+  routes:
+    - matchers: [ 'severity="page"' ]
+      receiver: pagerduty
+      continue: true
+    - matchers: [ 'severity="page"', 'component="vault"' ]
+      receiver: pagerduty-security
+    - matchers: [ 'severity="ticket"' ]
+      receiver: servicenow
+    - matchers: [ 'component="security"' ]
+      receiver: soc
+
+inhibit_rules:
+  - source_matchers: ['alertname="KubeNodeNotReady"']
+    target_matchers: ['severity="page"']
+    equal: ['node']
+
+receivers:
+  - name: slack-default
+    slack_configs:
+      - api_url: https://hooks.slack.com/services/XXX
+        channel: '#sentinelgrid-alerts'
+        title:   '[{{ .Status }}] {{ .CommonLabels.alertname }}'
+        text:    '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+
+  - name: pagerduty
+    pagerduty_configs:
+      - service_key: '__VAULT_PAGERDUTY_PRIMARY__'
+        severity:    '{{ .CommonLabels.severity }}'
+        description: '{{ .CommonAnnotations.summary }}'
+
+  - name: pagerduty-security
+    pagerduty_configs: [{ service_key: '__VAULT_PAGERDUTY_SECURITY__' }]
+
+  - name: servicenow
+    webhook_configs:
+      - url: https://snow.sentinelgrid.internal/api/now/v1/alerts
+        send_resolved: true
+
+  - name: soc
+    email_configs: [{ to: 'soc-oncall@sentinelgrid.internal', send_resolved: true }]

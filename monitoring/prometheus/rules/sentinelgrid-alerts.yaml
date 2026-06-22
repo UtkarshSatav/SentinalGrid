@@ -1,0 +1,79 @@
+## Production alert rules — RED + USE + SLO burn-rate (multi-window) + security signals.
+groups:
+
+  - name: sentinelgrid.slo.api-gateway
+    interval: 30s
+    rules:
+      - alert: APIGatewaySLOBurnFast
+        expr: |
+          (
+            sum(rate(http_requests_total{job="api-gateway",code=~"5.."}[1h]))
+              / sum(rate(http_requests_total{job="api-gateway"}[1h]))
+          ) > (14.4 * 0.0005)
+        for: 5m
+        labels: { severity: page, slo: availability }
+        annotations:
+          summary: "api-gateway burning error budget 14.4x — fast burn"
+          runbook: "https://runbooks.sentinelgrid.internal/slo-burn"
+
+      - alert: APIGatewaySLOBurnSlow
+        expr: |
+          (
+            sum(rate(http_requests_total{job="api-gateway",code=~"5.."}[6h]))
+              / sum(rate(http_requests_total{job="api-gateway"}[6h]))
+          ) > (6 * 0.0005)
+        for: 1h
+        labels: { severity: ticket, slo: availability }
+        annotations: { summary: "api-gateway slow burn — 6x error budget over 6h" }
+
+  - name: sentinelgrid.platform
+    rules:
+      - alert: KubeNodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Node {{ $labels.node }} NotReady > 10m" }
+
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 * 5 > 3
+        for: 15m
+        labels: { severity: page }
+        annotations: { summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} crash-looping" }
+
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumergroup_lag{topic="raw-events"} > 100000
+        for: 5m
+        labels: { severity: page, component: ingest }
+        annotations: { summary: "threat-analysis consumer lag > 100k events" }
+
+      - alert: RDSStorageLow
+        expr: aws_rds_free_storage_space_average < 100e9
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "RDS free storage < 100 GB" }
+
+  - name: sentinelgrid.security
+    rules:
+      - alert: VaultSealed
+        expr: vault_core_unsealed == 0
+        for: 1m
+        labels: { severity: page, component: vault }
+        annotations: { summary: "Vault is SEALED — secrets unavailable" }
+
+      - alert: AuthFailureSpike
+        expr: rate(sg_auth_failures_total[5m]) > 50
+        for: 5m
+        labels: { severity: page, component: security }
+        annotations: { summary: "Auth failure rate > 50/s — possible brute force" }
+
+      - alert: WAFBlockSpike
+        expr: rate(aws_wafv2_blocked_requests_sum[5m]) > 500
+        for: 2m
+        labels: { severity: ticket, component: edge }
+        annotations: { summary: "WAF block rate spike — possible coordinated attack" }
+
+      - alert: UnauthorizedAPIAccess
+        expr: increase(kube_audit_total{verb="create",resource=~"secrets|roles|rolebindings",user!~"system:.*"}[10m]) > 0
+        for: 0m
+        labels: { severity: page, component: rbac }
+        annotations: { summary: "Non-system user mutated security-sensitive resource" }

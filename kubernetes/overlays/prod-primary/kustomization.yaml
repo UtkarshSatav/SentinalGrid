@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: sg-apps
+
+resources:
+  - ../../namespaces/namespaces.yaml
+  - ../../base/threat-ingestion.yaml
+  - ../../base/other-services.yaml
+  - ../../base/network-policies.yaml
+  - ../../ingress/ingress.yaml
+
+commonLabels:
+  environment: prod
+  region: us-east-1
+
+images:
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/threat-ingestion,    newTag: $(IMAGE_TAG) }
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/threat-analysis,     newTag: $(IMAGE_TAG) }
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/intel-distribution,  newTag: $(IMAGE_TAG) }
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/incident-coordination, newTag: $(IMAGE_TAG) }
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/api-gateway,         newTag: $(IMAGE_TAG) }
+  - { name: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/dashboard-ui,        newTag: $(IMAGE_TAG) }
+
+configMapGenerator:
+  - name: platform-config
+    namespace: sg-apps
+    literals:
+      - kafka.brokers=b-1.msk.us-east-1.amazonaws.com:9098,b-2.msk.us-east-1.amazonaws.com:9098,b-3.msk.us-east-1.amazonaws.com:9098
+      - environment=prod
+      - region=us-east-1

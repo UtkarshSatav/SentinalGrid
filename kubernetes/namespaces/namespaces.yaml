@@ -1,0 +1,30 @@
+## SentinelGrid namespaces — each gets a dedicated SA, NetworkPolicy, RBAC.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sg-platform
+  labels: { tier: platform,    istio-injection: enabled }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sg-apps
+  labels: { tier: application, istio-injection: enabled }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sg-data
+  labels: { tier: data,        istio-injection: enabled }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sg-observability
+  labels: { tier: observability }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sg-security
+  labels: { tier: security }

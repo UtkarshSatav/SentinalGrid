@@ -1,0 +1,51 @@
+_format_version: "3.0"
+_transform: true
+
+# SentinelGrid API gateway — DB-less declarative routing.
+# Fronts the platform microservices; the OPA policies in ./opa-policies are
+# evaluated out-of-band for fine-grained authorization decisions.
+
+services:
+  - name: threat-ingestion
+    url: http://threat-ingestion:8080
+    routes:
+      - name: ingest
+        paths: ["/v1/events"]
+        strip_path: false
+        methods: ["POST"]
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 6000
+          policy: local
+      - name: correlation-id
+        config:
+          header_name: x-trace-id
+          generator: uuid
+
+  - name: intel-distribution
+    url: http://intel-distribution:8082
+    routes:
+      - name: taxii
+        paths: ["/taxii2"]
+        strip_path: false
+
+  - name: incident-coordination
+    url: http://incident-coordination:8083
+    routes:
+      - name: incidents
+        paths: ["/v1/incidents"]
+        strip_path: false
+
+  - name: dashboard-ui
+    url: http://dashboard-ui:3000
+    routes:
+      - name: console
+        paths: ["/"]
+        strip_path: false
+
+plugins:
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true

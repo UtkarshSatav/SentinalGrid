@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "mcp__MCP_DOCKER__mcp-find",
+      "Bash(docker build *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(tee -a /tmp/sg-dashboard-build.log)",
+      "Read(//tmp/**)",
+      "Bash(docker rm *)",
+      "Bash(docker compose *)",
+      "Bash(echo \"BUILD_EXIT=$?\")",
+      "Bash(tee -a /tmp/sg-compose-build.log)",
+      "Bash(docker exec sentinelgrid-dashboard-ui-1 node -e ' *)",
+      "Bash(tee -a docs/verification-snapshot.txt)",
+      "Bash(docker run *)"
+    ]
+  }
+}

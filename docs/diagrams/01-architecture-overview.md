@@ -1,0 +1,83 @@
+# Architecture Overview — Multi-Region Topology
+
+Renders natively on GitHub, VSCode (with Mermaid extension), or any Mermaid live editor.
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#1f2937','primaryTextColor':'#f9fafb','primaryBorderColor':'#6366f1','lineColor':'#94a3b8','fontSize':'14px'}}}%%
+flowchart TB
+    classDef edge fill:#312e81,stroke:#6366f1,color:#fff
+    classDef compute fill:#065f46,stroke:#10b981,color:#fff
+    classDef data fill:#7c2d12,stroke:#f97316,color:#fff
+    classDef security fill:#7f1d1d,stroke:#ef4444,color:#fff
+    classDef observ fill:#1e3a8a,stroke:#3b82f6,color:#fff
+
+    Partners((Partner<br/>Organisations)):::edge
+    DNS{{Route 53<br/>Health-checked<br/>Failover}}:::edge
+
+    subgraph PRIMARY[" 🇺🇸 PRIMARY REGION — us-east-1 "]
+        direction TB
+        CF1[CloudFront + WAF + Shield]:::edge
+        ALB1[ALB / NLB]:::edge
+
+        subgraph EKS1["EKS Cluster (3 AZs)"]
+            direction TB
+            KONG1[api-gateway<br/>Kong + OPA]:::compute
+            ING1[threat-ingestion]:::compute
+            ANA1[threat-analysis]:::compute
+            INT1[intel-distribution]:::compute
+            INC1[incident-coordination]:::compute
+            UI1[dashboard-ui]:::compute
+        end
+
+        VAULT1[(Vault HA<br/>Raft + KMS unseal)]:::security
+        PROM1[(Prometheus +<br/>Grafana)]:::observ
+        ELK1[(ELK Stack)]:::observ
+
+        RDS1[(RDS PostgreSQL<br/>Multi-AZ)]:::data
+        MSK1[(MSK Kafka<br/>3 brokers)]:::data
+        ES1[(Elasticsearch)]:::data
+        S31[(S3 — intel +<br/>audit Object Lock)]:::data
+    end
+
+    subgraph DR[" 🇺🇸 DR REGION — us-west-2 (warm standby) "]
+        direction TB
+        CF2[CloudFront + WAF]:::edge
+        ALB2[ALB]:::edge
+        EKS2[EKS Cluster<br/>min capacity]:::compute
+        RDS2[(RDS Read<br/>Replica)]:::data
+        MSK2[(MSK + MirrorMaker2)]:::data
+        ES2[(Elasticsearch<br/>CCR follower)]:::data
+        S32[(S3 mirror)]:::data
+    end
+
+    Partners -->|HTTPS + mTLS| DNS
+    DNS -->|active 100%| CF1
+    DNS -.->|standby 0%<br/>auto-failover| CF2
+
+    CF1 --> ALB1 --> KONG1
+    KONG1 --> ING1
+    ING1 --> MSK1
+    MSK1 --> ANA1
+    ANA1 --> RDS1
+    ANA1 --> ES1
+    ANA1 --> INC1
+    INC1 --> INT1
+    INT1 --> S31
+
+    EKS1 -.->|secrets +<br/>dynamic creds| VAULT1
+    EKS1 -.->|metrics| PROM1
+    EKS1 -.->|logs| ELK1
+
+    RDS1 ==>|CRR| RDS2
+    MSK1 ==>|MirrorMaker2| MSK2
+    ES1  ==>|CCR| ES2
+    S31  ==>|Object Lock CRR| S32
+
+    CF2 --> ALB2 --> EKS2
+    EKS2 --> RDS2
+    EKS2 --> MSK2
+```
+
+## What this diagram says in one sentence
+
+Active primary region serves all traffic; DR region maintains continuous data replication and can be scaled to full capacity and traffic-shifted within 30 minutes via Route 53 health checks.

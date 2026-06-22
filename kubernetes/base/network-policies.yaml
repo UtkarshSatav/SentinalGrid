@@ -1,0 +1,47 @@
+## Zero-trust: deny-by-default in every namespace; explicit allow rules below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: sg-apps }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: sg-platform }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# api-gateway → threat-ingestion
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: gateway-to-ingestion, namespace: sg-apps }
+spec:
+  podSelector: { matchLabels: { app: threat-ingestion } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { tier: platform } }
+          podSelector:       { matchLabels: { app: api-gateway } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# All apps may reach DNS, Kafka, RDS, Vault, Elasticsearch
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: app-egress, namespace: sg-apps }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to: [{ ipBlock: { cidr: 10.0.20.0/22 } }]   # data subnets (RDS, MSK, ES)
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9098 }
+        - { protocol: TCP, port: 9200 }
+    - to: [{ namespaceSelector: { matchLabels: { tier: security } } }]
+      ports: [{ protocol: TCP, port: 8200 }]      # Vault
+    - to: [{ namespaceSelector: { matchLabels: { tier: observability } } }]
+      ports: [{ protocol: TCP, port: 5044 }, { protocol: TCP, port: 9090 }]

@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background-color: #0b1220;
+  color: #e2e8f0;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+::selection {
+  background-color: rgba(99, 102, 241, 0.35);
+}
+
+::-webkit-scrollbar           { width: 10px; height: 10px; }
+::-webkit-scrollbar-track     { background: transparent; }
+::-webkit-scrollbar-thumb     { background: #1e293b; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #334155; }
+
+@layer components {
+  .panel {
+    @apply bg-bg-panel border border-border rounded-lg;
+  }
+  .stat {
+    @apply panel p-4 flex flex-col gap-1;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-critical { @apply bg-accent-red/15    text-accent-red; }
+  .badge-high     { @apply bg-accent-amber/15  text-accent-amber; }
+  .badge-medium   { @apply bg-accent-cyan/15   text-accent-cyan; }
+  .badge-low      { @apply bg-accent-green/15  text-accent-green; }
+  .badge-ok       { @apply bg-accent-green/15  text-accent-green; }
+  .badge-warn     { @apply bg-accent-amber/15  text-accent-amber; }
+  .badge-fail     { @apply bg-accent-red/15    text-accent-red; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1;   }
+  50%      { opacity: 0.3; }
+}
+.dot-live {
+  display: inline-block;
+  width: 8px; height: 8px; border-radius: 999px;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16,185,129,0.7);
+  animation: blink 1.5s infinite;
+}

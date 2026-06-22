@@ -1,0 +1,123 @@
+## Condensed manifests for the remaining five microservices.
+## Same security posture as threat-ingestion (see threat-ingestion.yaml for the full template).
+
+# ───────── threat-analysis (Kafka consumer; scales on consumer-group lag) ─────────
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: threat-analysis, namespace: sg-apps, labels: { app: threat-analysis } }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: threat-analysis } }
+  template:
+    metadata:
+      labels: { app: threat-analysis }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8081" }
+    spec:
+      serviceAccountName: threat-analysis
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: app
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/threat-analysis:IMAGE_TAG
+          ports: [{ containerPort: 8081 }]
+          resources: { requests: { cpu: "1", memory: "2Gi" }, limits: { cpu: "4", memory: "8Gi" } }
+          livenessProbe:  { httpGet: { path: /healthz, port: 8081 }, periodSeconds: 15 }
+          readinessProbe: { httpGet: { path: /readyz,  port: 8081 }, periodSeconds: 5 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      nodeSelector: { role: ingest }
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata: { name: threat-analysis, namespace: sg-apps }
+spec:
+  scaleTargetRef: { name: threat-analysis }
+  minReplicaCount: 4
+  maxReplicaCount: 40
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: BOOTSTRAP_BROKERS
+        consumerGroup: threat-analysis
+        topic: raw-events
+        lagThreshold: "5000"
+---
+# ───────── intel-distribution (Go, STIX/TAXII) ─────────
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: intel-distribution, namespace: sg-apps, labels: { app: intel-distribution } }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: intel-distribution } }
+  template:
+    metadata:
+      labels: { app: intel-distribution }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8082" }
+    spec:
+      serviceAccountName: intel-distribution
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: app
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/intel-distribution:IMAGE_TAG
+          ports: [{ containerPort: 8082 }]
+          resources: { requests: { cpu: "250m", memory: "256Mi" }, limits: { cpu: "1", memory: "1Gi" } }
+          livenessProbe:  { httpGet: { path: /healthz, port: 8082 } }
+          readinessProbe: { httpGet: { path: /readyz,  port: 8082 } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      nodeSelector: { role: app }
+---
+# ───────── incident-coordination (Node.js + Temporal SDK) ─────────
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: incident-coordination, namespace: sg-apps, labels: { app: incident-coordination } }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: incident-coordination } }
+  template:
+    metadata:
+      labels: { app: incident-coordination }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8083" }
+    spec:
+      serviceAccountName: incident-coordination
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: app
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/incident-coordination:IMAGE_TAG
+          ports: [{ containerPort: 8083 }]
+          resources: { requests: { cpu: "500m", memory: "512Mi" }, limits: { cpu: "2", memory: "2Gi" } }
+          livenessProbe:  { httpGet: { path: /healthz, port: 8083 } }
+          readinessProbe: { httpGet: { path: /readyz,  port: 8083 } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      nodeSelector: { role: app }
+---
+# ───────── api-gateway (Kong) ─────────
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api-gateway, namespace: sg-platform, labels: { app: api-gateway } }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: api-gateway } }
+  template:
+    metadata:
+      labels: { app: api-gateway }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8001" }
+    spec:
+      containers:
+        - name: kong
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/api-gateway:IMAGE_TAG
+          ports: [{ containerPort: 8000 }, { containerPort: 8001 }]
+          resources: { requests: { cpu: "500m", memory: "512Mi" }, limits: { cpu: "2", memory: "2Gi" } }
+---
+# ───────── dashboard-ui ─────────
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: dashboard-ui, namespace: sg-apps, labels: { app: dashboard-ui } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: dashboard-ui } }
+  template:
+    metadata: { labels: { app: dashboard-ui } }
+    spec:
+      containers:
+        - name: ui
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sentinelgrid/dashboard-ui:IMAGE_TAG
+          ports: [{ containerPort: 8080 }]
+          resources: { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "500m", memory: "512Mi" } }

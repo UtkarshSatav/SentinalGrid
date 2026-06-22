@@ -1,0 +1,12 @@
+{
+  "name": "incident-coordination",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SentinelGrid incident-coordination — playbook orchestration service",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "mkdir -p dist && cp -r src/. dist/",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {}
+}

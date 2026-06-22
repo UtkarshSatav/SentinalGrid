@@ -1,0 +1,197 @@
+// SentinelGrid — service CI/CD pipeline (declarative).
+// Runs on an ephemeral Kubernetes agent pod per build.
+//
+// Stages:
+//   1. Checkout & detect changed service
+//   2. Lint + SAST (semgrep)
+//   3. Unit tests + coverage gate (>= 80%)
+//   4. Build Docker image, sign with cosign
+//   5. Image scan (Trivy) — fail on HIGH/CRITICAL
+//   6. Push to ECR (Vault-issued creds)
+//   7. Update K8s manifests (kustomize edit set image)
+//   8. Deploy to staging → smoke test
+//   9. Manual approval gate
+//  10. Progressive rollout to prod (Argo Rollouts canary 10→50→100%)
+//  11. Post-deploy: synthetic checks + SLO burn-rate guard
+//  12. Notify Slack + audit-log to immutable S3
+
+@Library('sentinelgrid-shared') _
+
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile 'jenkins/pod-templates/build-agent.yaml'
+      defaultContainer 'jnlp'
+    }
+  }
+
+  options {
+    timeout(time: 60, unit: 'MINUTES')
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '50', artifactNumToKeepStr: '10'))
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    AWS_REGION       = 'us-east-1'
+    ECR_REGISTRY     = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    IMAGE_TAG        = "${env.GIT_COMMIT.take(8)}-${env.BUILD_NUMBER}"
+    VAULT_ADDR       = 'https://vault.sentinelgrid.internal'
+    COSIGN_EXPERIMENTAL = '1'
+  }
+
+  parameters {
+    string(name: 'SERVICE', defaultValue: '', description: 'Service to build (auto-detected if blank)')
+    booleanParam(name: 'SKIP_TESTS',    defaultValue: false)
+    booleanParam(name: 'FORCE_DEPLOY',  defaultValue: false)
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.SERVICE = params.SERVICE ?: detectChangedService()
+          echo "→ Building service: ${env.SERVICE}"
+        }
+      }
+    }
+
+    stage('Lint + SAST') {
+      parallel {
+        stage('Lint')   { steps { container('tools') { sh "make lint  SERVICE=${env.SERVICE}" } } }
+        stage('Semgrep'){ steps { container('tools') { sh 'semgrep --config=auto --error --json -o semgrep.json applications/' }
+                          post { always { archiveArtifacts 'semgrep.json' } } } }
+        stage('Secrets'){ steps { container('tools') { sh 'gitleaks detect --no-git --source=. --report-path=gitleaks.json' } } }
+      }
+    }
+
+    stage('Unit tests') {
+      when { expression { !params.SKIP_TESTS } }
+      steps {
+        container('tools') {
+          sh "make test SERVICE=${env.SERVICE} COVERAGE_MIN=80"
+        }
+      }
+      post {
+        always {
+          junit "applications/${env.SERVICE}/test-results/*.xml"
+          publishCoverage adapters: [coberturaAdapter("applications/${env.SERVICE}/coverage.xml")]
+        }
+      }
+    }
+
+    stage('Build image') {
+      steps {
+        container('kaniko') {
+          sh """
+            /kaniko/executor \
+              --context=. \
+              --dockerfile=docker/${env.SERVICE}/Dockerfile \
+              --destination=${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:${IMAGE_TAG} \
+              --destination=${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:latest \
+              --reproducible \
+              --cache=true --cache-ttl=24h
+          """
+        }
+      }
+    }
+
+    stage('Scan image') {
+      steps {
+        container('tools') {
+          sh """
+            trivy image --severity HIGH,CRITICAL --exit-code 1 \
+              --format sarif --output trivy.sarif \
+              ${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:${IMAGE_TAG}
+          """
+          archiveArtifacts 'trivy.sarif'
+        }
+      }
+    }
+
+    stage('Sign image') {
+      steps {
+        container('tools') {
+          withVault(vaultSecrets: [[ path: 'cosign/keys', secretValues: [[ vaultKey: 'key' ]] ]]) {
+            sh "cosign sign --key env://COSIGN_KEY ${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:${IMAGE_TAG}"
+          }
+        }
+      }
+    }
+
+    stage('Deploy: staging') {
+      steps {
+        container('tools') {
+          sh """
+            cd kubernetes/overlays/staging
+            kustomize edit set image \
+              ${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}=${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:${IMAGE_TAG}
+            kubectl apply -k . --record
+            kubectl rollout status deploy/${env.SERVICE} -n sg-apps --timeout=5m
+          """
+        }
+      }
+    }
+
+    stage('Smoke test') {
+      steps {
+        container('tools') { sh "./scripts/deploy/smoke-test.sh staging ${env.SERVICE}" }
+      }
+    }
+
+    stage('Approval gate') {
+      when { branch 'main' }
+      steps {
+        timeout(time: 4, unit: 'HOURS') {
+          input message: "Promote ${env.SERVICE}:${IMAGE_TAG} to production?",
+                ok: 'Promote',
+                submitter: 'sre-leads,platform-leads'
+        }
+      }
+    }
+
+    stage('Deploy: prod (canary)') {
+      when { branch 'main' }
+      steps {
+        container('tools') {
+          sh """
+            cd kubernetes/overlays/prod-primary
+            kustomize edit set image \
+              ${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}=${ECR_REGISTRY}/sentinelgrid/${env.SERVICE}:${IMAGE_TAG}
+            kubectl apply -k . --record
+            # Argo Rollouts canary: 10% → wait → 50% → wait → 100%
+            kubectl argo rollouts get rollout ${env.SERVICE} -n sg-apps --watch --timeout 15m
+          """
+        }
+      }
+    }
+
+    stage('Post-deploy verification') {
+      when { branch 'main' }
+      steps {
+        container('tools') {
+          sh "./scripts/deploy/verify-slo.sh ${env.SERVICE} 600"
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      auditLog(status: 'SUCCESS', service: env.SERVICE, tag: env.IMAGE_TAG)
+      slackSend channel: '#sentinelgrid-deploys', color: 'good',
+                message: "✅ ${env.SERVICE}:${IMAGE_TAG} deployed by ${env.BUILD_USER ?: 'jenkins'}"
+    }
+    failure {
+      auditLog(status: 'FAILED', service: env.SERVICE, tag: env.IMAGE_TAG)
+      slackSend channel: '#sentinelgrid-deploys', color: 'danger',
+                message: "❌ ${env.SERVICE} build #${env.BUILD_NUMBER} failed: ${env.BUILD_URL}"
+    }
+    always {
+      cleanWs()
+    }
+  }
+}

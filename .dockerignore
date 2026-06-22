@@ -1,0 +1,17 @@
+# Keep Docker build context small. Build context = repo root.
+**/node_modules
+**/.next
+**/out
+**/.turbo
+**/*.log
+**/.DS_Store
+**/.env*.local
+**/*.tsbuildinfo
+applications/dashboard-ui/sentinelgrid.db
+applications/dashboard-ui/sentinelgrid.db-shm
+applications/dashboard-ui/sentinelgrid.db-wal
+docs/screenshots
+docs/diagrams/*.png
+docs/diagrams/*.svg
+docs/presentation/*.pdf
+.git
